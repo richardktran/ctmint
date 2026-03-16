@@ -1,0 +1,23 @@
+project: ecommerce
+
+services:
+  - name: auth-service
+    repo_path: ./services/auth
+    language: python
+  - name: payment-service
+    repo_path: ./services/payment
+    language: rust
+
+logs:
+  provider: file
+  path: /var/log/ecommerce/*.log
+  format: json
+
+database:
+  type: postgres
+  connection: "${DATABASE_URL}"
+  schema: public
+
+tracing:
+  provider: otel
+  endpoint: http://localhost:4317

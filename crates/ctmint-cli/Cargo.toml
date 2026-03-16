@@ -1,0 +1,17 @@
+[package]
+name = "ctmint-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "ctmint"
+path = "src/main.rs"
+
+[dependencies]
+ctmint-core = { workspace = true }
+ctmint-config = { workspace = true }
+ctmint-storage = { workspace = true }
+ctmint-mcp = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
