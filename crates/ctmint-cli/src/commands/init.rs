@@ -1,18 +1,21 @@
-use std::path::Path;
+use ctmint_config::GlobalConfig;
+use ctmint_onboard::{run_onboarding, OnboardingOptions};
+use std::path::PathBuf;
 
-pub async fn run(path: &str, output: &str) {
-    println!("ContextMint — Onboarding");
-    println!("========================");
-    println!("Repo path:   {path}");
-    println!("Output:      {output}");
-    println!();
+pub async fn run(path: &str, output: &str, no_ai: bool, force: bool, demo: bool) {
+    let global = GlobalConfig::resolve();
 
-    if Path::new(output).exists() {
-        println!("Manifest already exists at {output}. Use --force to overwrite (not yet implemented).");
-        return;
+    let opts = OnboardingOptions {
+        repo_path: PathBuf::from(path),
+        output_path: PathBuf::from(output),
+        no_ai,
+        force,
+        demo,
+        data_dir: global.data_dir,
+    };
+
+    if let Err(e) = run_onboarding(opts).await {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
     }
-
-    println!("[Cycle 1] AI-guided onboarding is not implemented yet.");
-    println!("         It will scan the repo, ask about logs/DB/tracing,");
-    println!("         and generate {output} using an embedded local model.");
 }

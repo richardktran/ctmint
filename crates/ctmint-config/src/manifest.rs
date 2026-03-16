@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 pub struct ProjectManifest {
     pub project: String,
     pub services: Vec<ServiceConfig>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logs: Option<LogsConfig>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub database: Option<DatabaseConfig>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracing: Option<TracingConfig>,
 }
 
@@ -24,11 +24,11 @@ pub struct ServiceConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogsConfig {
     pub provider: LogProvider,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<LogFormat>,
 }
 
@@ -54,7 +54,7 @@ pub struct DatabaseConfig {
     #[serde(rename = "type")]
     pub db_type: DatabaseType,
     pub connection: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
 }
 
@@ -70,7 +70,7 @@ pub enum DatabaseType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TracingConfig {
     pub provider: TracingProvider,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
 }
 

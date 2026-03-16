@@ -25,7 +25,22 @@ enum Commands {
         /// Output path for the project manifest
         #[arg(long, default_value = "ctmint.yaml")]
         output: String,
+
+        /// Skip AI model and use guided question flow only
+        #[arg(long)]
+        no_ai: bool,
+
+        /// Overwrite existing manifest without asking
+        #[arg(long)]
+        force: bool,
+
+        /// Generate a sample manifest without prompting (for CI or quick test)
+        #[arg(long)]
+        demo: bool,
     },
+
+    /// Download the onboarding AI model (~484 MB) for use with `ctmint init`
+    DownloadModel,
 
     /// Index the codebase: parse source, build symbol graph, populate SKG
     Index {
@@ -70,8 +85,17 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { path, output } => {
-            commands::init::run(&path, &output).await;
+        Commands::Init {
+            path,
+            output,
+            no_ai,
+            force,
+            demo,
+        } => {
+            commands::init::run(&path, &output, no_ai, force, demo).await;
+        }
+        Commands::DownloadModel => {
+            commands::download_model::run().await;
         }
         Commands::Index { project } => {
             commands::index::run(&project).await;

@@ -5,6 +5,7 @@ members = [
     "crates/ctmint-config",
     "crates/ctmint-storage",
     "crates/ctmint-mcp",
+    "crates/ctmint-onboard",
     "crates/ctmint-cli",
 ]
 
@@ -19,6 +20,7 @@ ctmint-core = { path = "crates/ctmint-core" }
 ctmint-config = { path = "crates/ctmint-config" }
 ctmint-storage = { path = "crates/ctmint-storage" }
 ctmint-mcp = { path = "crates/ctmint-mcp" }
+ctmint-onboard = { path = "crates/ctmint-onboard" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

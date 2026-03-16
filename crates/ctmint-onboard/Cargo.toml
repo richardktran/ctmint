@@ -1,0 +1,18 @@
+[package]
+name = "ctmint-onboard"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ctmint-core = { workspace = true }
+ctmint-config = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+reqwest = { version = "0.12", features = ["stream"] }
+
+[dev-dependencies]
+tempfile = "3"

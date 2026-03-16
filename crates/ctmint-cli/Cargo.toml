@@ -12,6 +12,7 @@ ctmint-core = { workspace = true }
 ctmint-config = { workspace = true }
 ctmint-storage = { workspace = true }
 ctmint-mcp = { workspace = true }
+ctmint-onboard = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }
