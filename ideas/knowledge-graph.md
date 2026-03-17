@@ -10,6 +10,9 @@ The **System Knowledge Graph (SKG)** is the central store of **normalized system
 
 The SKG is **graph-first**: reasoning and context selection are driven by **traversal** (e.g. endpoint → service → dependencies → tables), not by full-text or vector search alone. Vector search is used **after** the graph narrows the candidate set (see `vector-index.md`).
 
+**Design principle (index-time over query-time complexity)**  
+Complexity is shifted to **index time** (AST parsing, symbol extraction, dependency and call-graph building), not to query time. At query time we use **deterministic graph traversal** (and optionally Cypher or a fluent API), not embedding-based retrieval for structure. Benefits: deterministic answers, full structural context in one traversal, no chunking of the graph, and lower token usage for “what calls this?” / “what does this depend on?” style questions. This aligns with a **Graph RAG** approach: query → graph traversal → results, rather than query → embedding → vector search.
+
 ---
 
 ## 2. High-Level Architecture
@@ -51,6 +54,9 @@ All nodes share a minimal base:
 | Class      | name, module_id, service_id                           | LoginHandler        |
 | Function   | name, signature, file_path, line_start, line_end, summary (optional), service_id | login_user          |
 | Endpoint   | method, path, service_id                              | POST /login         |
+
+**Optional (structure-first pass)**  
+For repos where a full file-tree view is useful, **File** and **Folder** can be first-class nodes: **Folder** (path, parent_id), **File** (path, folder_id or module_id). Edges: Folder -[:CONTAINS]-> Folder | File; Module -[:CONTAINS]-> File when mapping “this module is implemented by these files.” Building the graph in a **structure pass** first (repo → Folder/File tree → CONTAINS) then layering AST-derived nodes (Function, Class, etc.) on top keeps the pipeline clear and supports “which files are in this module?” without scanning the filesystem at query time.
 
 ### 3.2 Data Domain
 
@@ -99,6 +105,9 @@ Edges are directed and typed. Convention: `(Source)-[:TYPE]->(Target)`.
 | DEPENDS_ON  | Service   | Service, ExternalAPI, Cache | Dependency (code or config) |
 | READS       | Function  | DatabaseTable | Function reads table |
 | WRITES      | Function  | DatabaseTable | Function writes table |
+
+**Call-graph construction (CALLS edges)**  
+CALLS edges can be built in stages for better coverage: (1) **Exact match** using resolved imports and symbol IDs; (2) **Fuzzy match** (e.g. name similarity or Levenshtein) when the target is a string or dynamic call; (3) **Heuristics** for chaining, callbacks, or framework-specific patterns. This multi-stage approach improves CALLS coverage without requiring perfect static analysis. See Code Indexer and Code Parser design for how parser output feeds these stages.
 
 ### 4.2 Data
 
@@ -153,6 +162,13 @@ Typical read patterns:
 5. **Architecture map (Layer 3)**
    - Precomputed or on-demand: `MATCH (s:Service)-[:CALLS]->(t:Service) RETURN s, t` to get service-to-service graph for “architecture summary”.
 
+6. **Callers and impact (Graph RAG style)**
+   - **get_callers(symbol_id)**: Traverse incoming CALLS edges from the given Function (or symbol). “What calls this function?”
+   - **get_dependencies(file_id | symbol_id)**: Traverse IMPORTS and optionally CALLS from the given node. “What does this file/symbol depend on?”
+   - **blast_radius(function_id | service_id, max_hops?)**: BFS (or bounded traversal) over CALLS and IMPORTS from the given node to approximate “impact of changing this.” Useful for change-impact and risk scope.
+
+These patterns are good candidates for **MCP tools**: expose them so the AI can ask “what calls X?” or “what’s the blast radius of changing Y?” via graph traversal instead of vector search.
+
 ---
 
 ## 7. Storage Options
@@ -183,16 +199,29 @@ Typical read patterns:
 
 ---
 
-## 9. Integration Summary
+## 9. Build Pipeline and Performance (code graph)
+
+A logical order for building the **code** part of the graph (aligned with graph-first code indexers) is:
+
+1. **Structure pass** — Traverse repo; create Folder/File (or at least Module) nodes and CONTAINS edges (file tree skeleton).
+2. **AST pass** — Parse files (e.g. Tree-sitter); extract Function, Class, Symbol nodes and attach to File/Module; optional **AST cache** (LRU, memory-bounded) to avoid re-parsing unchanged files (see `code-parser.md`).
+3. **Import resolution** — Resolve module paths; add IMPORTS edges between modules/files.
+4. **Call-graph pass** — Add CALLS edges (exact, fuzzy, heuristic as in §4.1).
+
+Writers (e.g. Code Indexer) can build the graph **in memory** during the run, then **bulk load** into the persistent store (single transaction or batched writes) instead of writing row-by-row during parsing. This reduces DB round-trips and keeps index-time performance predictable for large repos.
+
+---
+
+## 10. Integration Summary
 
 - **Code Indexer**: Writes Service, Module, Class, Function, Endpoint and code-domain edges.
 - **Data Ingestion**: Writes Database, DatabaseTable, Column, Index and data-domain edges; Code Indexer adds READS/WRITES from Function to DatabaseTable.
 - **Runtime Ingestion**: Writes minimal runtime nodes or only edges (Service → log/trace store refs) so funnel and plugins can scope queries.
 - **Orchestrator / Funnel**: Read-only; traverse graph to narrow entities, then pull details from vector index and runtime stores.
-- **MCP tools**: Expose `get_service_graph`, `get_db_schema`, `get_architecture_map` etc. by querying the SKG via the same query API.
+- **MCP tools**: Expose `get_service_graph`, `get_db_schema`, `get_architecture_map`, and graph-RAG style tools such as `get_callers(symbol_id)`, `get_dependencies(file_id|symbol_id)`, `blast_radius(function_id|service_id)` by querying the SKG via the same query API.
 
 ---
 
-## 10. Summary
+## 11. Summary
 
 The System Knowledge Graph is the **single source of truth** for system structure (code, data, and lightweight runtime linkage). It uses a **normalized node/edge model** and supports **traversal-based reasoning** so the Context Funnel and AI can answer “what services call this one?”, “what tables does this endpoint touch?”, and “what indexes exist on this table?” without scanning the whole codebase or database.
