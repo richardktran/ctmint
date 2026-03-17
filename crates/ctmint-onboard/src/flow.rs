@@ -9,8 +9,8 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 pub struct OnboardingOptions {
-    pub repo_path: PathBuf,
-    pub output_path: PathBuf,
+    pub repo_path: Option<PathBuf>,
+    pub output_path: Option<PathBuf>,
     pub no_ai: bool,
     pub force: bool,
     pub demo: bool,
@@ -23,8 +23,8 @@ impl Default for OnboardingOptions {
             .or_else(|_| std::env::var("USERPROFILE"))
             .unwrap_or_else(|_| ".".into());
         Self {
-            repo_path: PathBuf::from("."),
-            output_path: PathBuf::from("ctmint.yaml"),
+            repo_path: None,
+            output_path: None,
             no_ai: false,
             force: false,
             demo: false,
@@ -33,18 +33,36 @@ impl Default for OnboardingOptions {
     }
 }
 
+fn prompt_line(prompt: &str) -> anyhow::Result<String> {
+    let stdin = io::stdin();
+    let mut reader = stdin.lock();
+    print!("{prompt}");
+    io::stdout().flush()?;
+    let mut input = String::new();
+    reader.read_line(&mut input)?;
+    Ok(input.trim().to_string())
+}
+
+fn prompt_path(prompt: &str, default: &Path) -> anyhow::Result<PathBuf> {
+    let input = prompt_line(&format!("{prompt} [default: {}]: ", default.display()))?;
+    if input.is_empty() {
+        Ok(default.to_path_buf())
+    } else {
+        Ok(PathBuf::from(input))
+    }
+}
+
 pub async fn run_onboarding(opts: OnboardingOptions) -> anyhow::Result<()> {
     println!("ContextMint — Onboarding");
     println!("========================\n");
 
-    if !opts.force && ManifestWriter::exists(&opts.output_path) {
-        if !ManifestWriter::prompt_overwrite(&opts.output_path) {
-            println!("Aborted. Use --force to overwrite.");
-            return Ok(());
-        }
-    }
-
-    let repo_path = std::fs::canonicalize(&opts.repo_path).unwrap_or_else(|_| opts.repo_path.clone());
+    // Ask for repo path up front (unless provided via CLI).
+    let repo_default = PathBuf::from(".");
+    let repo_input = match &opts.repo_path {
+        Some(p) => p.clone(),
+        None => prompt_path("Path to source code repository", &repo_default)?,
+    };
+    let repo_path = std::fs::canonicalize(&repo_input).unwrap_or(repo_input);
 
     println!("Scanning repository at {}...\n", repo_path.display());
     let scanner = RepoScanner::new(&repo_path);
@@ -58,7 +76,26 @@ pub async fn run_onboarding(opts: OnboardingOptions) -> anyhow::Result<()> {
     }
 
     if opts.demo {
-        return run_demo_flow(&detection, &repo_path, &opts.output_path);
+        // Demo mode should not prompt; derive an output path if none was provided.
+        let out = match &opts.output_path {
+            Some(p) => p.clone(),
+            None => {
+                let project = repo_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "demo-project".to_string());
+                repo_path.join(format!("{project}.yaml"))
+            }
+        };
+
+        if !opts.force && ManifestWriter::exists(&out) {
+            if !ManifestWriter::prompt_overwrite(&out) {
+                println!("Aborted. Use --force to overwrite.");
+                return Ok(());
+            }
+        }
+
+        return run_demo_flow(&detection, &repo_path, &out);
     }
 
     let mut state = OnboardingState::new(repo_path);
@@ -81,11 +118,31 @@ pub async fn run_onboarding(opts: OnboardingOptions) -> anyhow::Result<()> {
     }
 
     let manifest = ManifestWriter::build_manifest(&state)?;
-    ManifestWriter::write(&manifest, &opts.output_path)?;
+
+    // Ask where to store the yaml (unless provided). Default: <project>.yaml in repo root.
+    let project_name = state
+        .project_name
+        .clone()
+        .unwrap_or_else(|| "ctmint-project".to_string());
+    let default_out = state.repo_path.join(format!("{project_name}.yaml"));
+
+    let out = match &opts.output_path {
+        Some(p) => p.clone(),
+        None => prompt_path("Where should we write the manifest YAML?", &default_out)?,
+    };
+
+    if !opts.force && ManifestWriter::exists(&out) {
+        if !ManifestWriter::prompt_overwrite(&out) {
+            println!("Aborted. Use --force to overwrite.");
+            return Ok(());
+        }
+    }
+
+    ManifestWriter::write(&manifest, &out)?;
 
     println!(
         "\nConfig written to {}\nRun `ctmint index` to index the codebase.",
-        opts.output_path.display()
+        out.display()
     );
 
     Ok(())
@@ -163,7 +220,40 @@ fn run_ai_flow(
         // Try AI extraction
         let extraction_prompt = prompts::extraction_prompt(detection, step.key(), input);
         match engine.extract_json(&extraction_prompt) {
-            Ok(json) => {
+            Ok(mut json) => {
+                // Database step: if user input contains a path, do 2-step AI (read file, then AI extracts from file content).
+                // Otherwise 1-step: AI extracts directly from user input.
+                if matches!(step, OnboardingStep::Database) {
+                    let path_in_input = questions::try_extract_env_path_anywhere(input);
+
+                    if let Some(env_path) = path_in_input {
+                        let resolved = if env_path.is_absolute() {
+                            env_path
+                        } else {
+                            state.repo_path.join(env_path)
+                        };
+
+                        if let Ok(content) = std::fs::read_to_string(&resolved) {
+                            let capped = if content.len() > 8_000 {
+                                &content[..8_000]
+                            } else {
+                                &content
+                            };
+
+                            let p2 = prompts::extraction_prompt_with_file_context(
+                                detection,
+                                step.key(),
+                                input,
+                                &resolved.to_string_lossy(),
+                                capped,
+                            );
+                            if let Ok(json2) = engine.extract_json(&p2) {
+                                json = json2;
+                            }
+                        }
+                    }
+                }
+
                 if let Err(e) = apply_ai_extraction(&json, step, detection, state) {
                     eprintln!("AI extraction failed ({e}), falling back to keyword parsing.");
                     questions::parse_answer(step, input, detection, state);
@@ -245,10 +335,11 @@ fn apply_ai_extraction(
             }
         }
         OnboardingStep::Database => {
+            // AI path: use only what the model extracted (type, connection, schema). No manual env parsing.
             if let Some(db) = json.get("database") {
-                let config: ctmint_config::manifest::DatabaseConfig =
-                    serde_json::from_value(db.clone())?;
-                state.database = Some(config);
+                if let Ok(config) = serde_json::from_value::<ctmint_config::manifest::DatabaseConfig>(db.clone()) {
+                    state.database = Some(config);
+                }
             }
         }
         OnboardingStep::Tracing => {

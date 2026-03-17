@@ -3,7 +3,9 @@ use ctmint_config::manifest::{
     DatabaseConfig, DatabaseType, LogFormat, LogProvider, LogsConfig, ServiceConfig,
     TracingConfig, TracingProvider,
 };
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OnboardingStep {
@@ -184,7 +186,7 @@ pub fn question_text(step: &OnboardingStep, detection: &DetectionResult) -> Stri
                     ));
                 }
             }
-            prompt.push_str("  [connection URL | ${ENV_VAR} | empty to skip]: ");
+            prompt.push_str("  [connection URL | ${ENV_VAR} | paste env vars | mention path to .env | empty to skip]: ");
             prompt
         }
         OnboardingStep::Tracing => {
@@ -230,7 +232,11 @@ pub fn parse_answer(
             state.logs = Some(parse_logs_answer(input));
         }
         OnboardingStep::Database => {
-            state.database = Some(parse_database_answer(input, detection));
+            state.database = Some(parse_database_answer(
+                input,
+                detection,
+                Some(&state.repo_path),
+            ));
         }
         OnboardingStep::Tracing => {
             state.tracing = Some(parse_tracing_answer(input, detection));
@@ -338,7 +344,213 @@ fn parse_logs_answer(input: &str) -> LogsConfig {
     }
 }
 
-fn parse_database_answer(input: &str, detection: &DetectionResult) -> DatabaseConfig {
+/// Try to find a plausible `.env` file path anywhere in free-form text.
+/// Examples it should catch:
+/// - "it's in /Users/me/repo/.env"
+/// - "use ./services/api/.env for this"
+/// - "read ../.env (mysql creds)"
+pub fn try_extract_env_path_anywhere(input: &str) -> Option<PathBuf> {
+    let s = input.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    // Tokenize on whitespace and a few common punctuation chars; keep it simple and dependency-free.
+    for raw in s.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' )) {
+        let token = raw.trim().trim_matches('"').trim_matches('\'');
+        if token.is_empty() {
+            continue;
+        }
+        let token_lower = token.to_lowercase();
+        if !token_lower.contains(".env") {
+            continue;
+        }
+
+        // Heuristic: accept absolute or relative path-like tokens ending with .env*
+        let looks_pathy = token.starts_with('/')
+            || token.starts_with("./")
+            || token.starts_with("../")
+            || token.starts_with("~/" );
+        if looks_pathy {
+            return Some(PathBuf::from(token));
+        }
+
+        // Also accept bare ".env" (common) and "path/to/.env"
+        if token == ".env" || token.ends_with("/.env") || token_lower.ends_with(".env") {
+            return Some(PathBuf::from(token));
+        }
+    }
+
+    None
+}
+
+/// Parse .env-style content into key=value pairs (skips comments and empty lines).
+fn parse_env_content(content: &str) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, val)) = line.split_once('=') {
+            let key = key.trim().to_string();
+            let val = val
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_string();
+            if !key.is_empty() {
+                env.insert(key, val);
+            }
+        }
+    }
+    env
+}
+
+fn infer_db_type_from_env_map(env: &HashMap<String, String>, detection: &DetectionResult) -> DatabaseType {
+    let env_has_mysqlish = env.keys().any(|k| k.to_lowercase().contains("mysql"))
+        || env
+            .get("DB_CONNECTION")
+            .map(|s| s.to_lowercase() == "mysql")
+            .unwrap_or(false)
+        || env.contains_key("MYSQL_URL");
+    if env_has_mysqlish {
+        return DatabaseType::Mysql;
+    }
+
+    let env_has_pgish = env.keys().any(|k| k.to_lowercase().contains("postgres"))
+        || env.contains_key("DATABASE_URL")
+        || env.contains_key("PGHOST")
+        || env.contains_key("PGDATABASE");
+    if env_has_pgish {
+        return DatabaseType::Postgres;
+    }
+
+    if !detection.db_hints.is_empty() {
+        return match detection.db_hints[0].db_type.as_str() {
+            "postgres" => DatabaseType::Postgres,
+            "mysql" => DatabaseType::Mysql,
+            _ => DatabaseType::Postgres,
+        };
+    }
+
+    DatabaseType::Postgres
+}
+
+/// Build a connection URL from .env key=value map. Prefers DATABASE_URL; else builds from DB_* / MYSQL_*.
+fn build_connection_from_env(env: &HashMap<String, String>, db_type: DatabaseType) -> Option<String> {
+    let get = |k: &str| env.get(k).map(String::as_str);
+
+    if let Some(url) = get("DATABASE_URL") {
+        if (!url.is_empty()) && (url.contains("://") || url.starts_with("${")) {
+            return Some(url.to_string());
+        }
+    }
+
+    match db_type {
+        DatabaseType::Mysql => {
+            let host = get("DB_HOST").or_else(|| get("MYSQL_HOST")).unwrap_or("127.0.0.1");
+            let port = get("DB_PORT").or_else(|| get("MYSQL_PORT")).unwrap_or("3306");
+            let database = get("DB_DATABASE").or_else(|| get("MYSQL_DATABASE")).unwrap_or("");
+            let user = get("DB_USERNAME").or_else(|| get("MYSQL_USER")).unwrap_or("root");
+            let password = get("DB_PASSWORD").or_else(|| get("MYSQL_PASSWORD")).unwrap_or("");
+            if database.is_empty() {
+                return None;
+            }
+            let auth = if password.is_empty() {
+                user.to_string()
+            } else {
+                format!("{}:{}", user, urlencoding::encode(password))
+            };
+            Some(format!("mysql://{}@{}:{}/{}", auth, host, port, database))
+        }
+        DatabaseType::Postgres => {
+            let host = get("DB_HOST").or_else(|| get("PGHOST")).unwrap_or("127.0.0.1");
+            let port = get("DB_PORT").or_else(|| get("PGPORT")).unwrap_or("5432");
+            let database = get("DB_DATABASE").or_else(|| get("PGDATABASE")).unwrap_or("");
+            let user = get("DB_USERNAME").or_else(|| get("PGUSER")).unwrap_or("postgres");
+            let password = get("DB_PASSWORD").or_else(|| get("PGPASSWORD")).unwrap_or("");
+            if database.is_empty() {
+                return None;
+            }
+            let auth = if password.is_empty() {
+                user.to_string()
+            } else {
+                format!("{}:{}", user, urlencoding::encode(password))
+            };
+            Some(format!("postgresql://{}@{}:{}/{}", auth, host, port, database))
+        }
+        _ => None,
+    }
+}
+
+/// Resolve connection string and db type by reading an env file at `path` (relative to `base` if not absolute).
+pub fn resolve_connection_from_env_path(
+    path: &Path,
+    base: Option<&Path>,
+    detection: &DetectionResult,
+) -> Option<(String, DatabaseType)> {
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Some(b) = base {
+        b.join(path)
+    } else {
+        path.to_path_buf()
+    };
+
+    let content = fs::read_to_string(&resolved).ok()?;
+    let env = parse_env_content(&content);
+
+    let db_type = infer_db_type_from_env_map(&env, detection);
+
+    build_connection_from_env(&env, db_type.clone()).map(|conn| (conn, db_type))
+}
+
+fn try_resolve_connection_from_free_text(
+    input: &str,
+    detection: &DetectionResult,
+    resolve_base: Option<&Path>,
+) -> Option<(String, DatabaseType)> {
+    // 1) If user pasted env lines directly, parse them and build a URL.
+    if input.contains('=') && (input.contains("DB_") || input.contains("DATABASE_URL") || input.contains("MYSQL_") || input.contains("PG")) {
+        let env = parse_env_content(input);
+        if !env.is_empty() {
+            let db_type = infer_db_type_from_env_map(&env, detection);
+            if let Some(conn) = build_connection_from_env(&env, db_type.clone()) {
+                return Some((conn, db_type));
+            }
+        }
+    }
+
+    // 2) If free text contains an env file path anywhere, try to load it.
+    if let Some(path) = try_extract_env_path_anywhere(input) {
+        if let Some((conn, db_type)) =
+            resolve_connection_from_env_path(path.as_path(), resolve_base, detection)
+        {
+            return Some((conn, db_type));
+        }
+        // We recognized an env file path in the user's free text but couldn't read/parse it.
+        // Avoid persisting the entire free-text sentence as the connection string.
+        let db_type = if !detection.db_hints.is_empty() {
+            match detection.db_hints[0].db_type.as_str() {
+                "postgres" => DatabaseType::Postgres,
+                "mysql" => DatabaseType::Mysql,
+                _ => DatabaseType::Postgres,
+            }
+        } else {
+            DatabaseType::Postgres
+        };
+        return Some(("${DATABASE_URL}".to_string(), db_type));
+    }
+
+    None
+}
+
+fn parse_database_answer(
+    input: &str,
+    detection: &DetectionResult,
+    resolve_base: Option<&Path>,
+) -> DatabaseConfig {
     let input = input.trim();
     if input.is_empty() {
         return DatabaseConfig {
@@ -349,6 +561,22 @@ fn parse_database_answer(input: &str, detection: &DetectionResult) -> DatabaseCo
     }
 
     let input_lower = input.to_lowercase();
+
+    // Free-form parsing (\"AI-ish\" heuristics): env lines pasted into the prompt, or env path mentioned anywhere.
+    if let Some((connection, db_type)) =
+        try_resolve_connection_from_free_text(input, detection, resolve_base)
+    {
+        let schema = if matches!(db_type, DatabaseType::Postgres) {
+            Some("public".to_string())
+        } else {
+            None
+        };
+        return DatabaseConfig {
+            db_type,
+            connection,
+            schema,
+        };
+    }
 
     let db_type = if input_lower.contains("postgres") || input_lower.starts_with("postgresql://") {
         DatabaseType::Postgres
@@ -468,7 +696,7 @@ mod tests {
     #[test]
     fn test_parse_database_postgres() {
         let det = DetectionResult::default();
-        let db = parse_database_answer("postgresql://localhost/mydb", &det);
+        let db = parse_database_answer("postgresql://localhost/mydb", &det, None);
         assert!(matches!(db.db_type, DatabaseType::Postgres));
         assert_eq!(db.schema.as_deref(), Some("public"));
     }
@@ -476,14 +704,45 @@ mod tests {
     #[test]
     fn test_parse_database_env_var() {
         let det = DetectionResult::default();
-        let db = parse_database_answer("${DATABASE_URL}", &det);
+        let db = parse_database_answer("${DATABASE_URL}", &det, None);
         assert_eq!(db.connection, "${DATABASE_URL}");
+    }
+
+    #[test]
+    fn test_parse_database_free_text_env_path_anywhere_fallbacks_to_env_var() {
+        // We don't create a real file here; we just ensure we don't store the literal text.
+        let det = DetectionResult::default();
+        let db = parse_database_answer(
+            "db creds are in /this/path/does/not/exist/.env please use that",
+            &det,
+            None,
+        );
+        // Since the path doesn't exist, it should NOT store the literal "get from" style text.
+        // It falls back to standard parsing and keeps the original input as connection only if not recognized.
+        // Here it IS recognized as an env path; resolution fails => ${DATABASE_URL}.
+        assert_eq!(db.connection, "${DATABASE_URL}");
+    }
+
+    #[test]
+    fn test_parse_database_pasted_env_lines_builds_mysql_url() {
+        let det = DetectionResult::default();
+        let input = r#"
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=mydb
+DB_USERNAME=root
+DB_PASSWORD=pass
+"#;
+        let db = parse_database_answer(input, &det, None);
+        assert!(matches!(db.db_type, DatabaseType::Mysql));
+        assert_eq!(db.connection, "mysql://root:pass@127.0.0.1:3306/mydb");
     }
 
     #[test]
     fn test_parse_database_empty() {
         let det = DetectionResult::default();
-        let db = parse_database_answer("", &det);
+        let db = parse_database_answer("", &det, None);
         assert!(matches!(db.db_type, DatabaseType::None));
     }
 

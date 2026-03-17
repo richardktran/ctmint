@@ -1,0 +1,12 @@
+project: kmy
+services:
+- name: kmy
+  repo_path: /Users/richardktran/Projects/KMY-Drug-Store
+  language: go
+logs:
+  provider: file
+  path: /Users/richardktran/Projects/KMY-Drug-Store/logs/app.log
+  format: text
+database:
+  type: mysql
+  connection: Get from this DB_CONNECTION=mysqlDB_HOST=127.0.0.1DB_PORT=3306DB_DATABASE=kmy_drug_storeDB_USERNAME=rootDB_PASSWORD=annowitDB_LOG_LEVEL=info

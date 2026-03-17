@@ -30,6 +30,32 @@ pub fn extraction_prompt(
     )
 }
 
+pub fn extraction_prompt_with_file_context(
+    detection: &DetectionResult,
+    step: &str,
+    user_answer: &str,
+    file_path: &str,
+    file_content: &str,
+) -> String {
+    let context = detection.summary();
+    let schema_hint = schema_for_step(step);
+
+    format!(
+        "<|im_start|>system\n{SYSTEM_EXTRACT}\n<|im_end|>\n\
+         <|im_start|>user\n\
+         Context: {context}\n\
+         Current step: {step}\n\
+         User said: \"{user_answer}\"\n\n\
+         Extra context: contents of {file_path}:\n\
+         ---\n\
+         {file_content}\n\
+         ---\n\n\
+         Extract as JSON with fields: {schema_hint}\n\
+         <|im_end|>\n\
+         <|im_start|>assistant\n"
+    )
+}
+
 pub fn next_question_prompt(state: &OnboardingState) -> String {
     let known = state.summary();
 
@@ -48,7 +74,7 @@ fn schema_for_step(step: &str) -> &'static str {
         "project" => "project (string: project name)",
         "services" => "services (array of {{name, repo_path, language}})",
         "logs" => "logs (object with {{provider: file|loki|otel|none, path?: string, endpoint?: string, format?: json|jsonl|text}})",
-        "database" => "database (object with {{type: postgres|mysql|sqlite|none, connection: string, schema?: string}})",
+        "database" => "database (object with {{type: postgres|mysql|sqlite|none, connection: string, schema?: string}}. connection must be the final connection URL, e.g. mysql://user:pass@host:port/db or postgresql://... or ${DATABASE_URL}; parse or derive it from the user input or from the file content when provided)",
         "tracing" => "tracing (object with {{provider: otel|jaeger|zipkin|none, endpoint?: string}})",
         _ => "the relevant configuration fields",
     }
