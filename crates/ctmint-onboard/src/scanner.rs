@@ -110,7 +110,18 @@ impl RepoScanner {
     }
 
     fn detect_database(&self, result: &mut DetectionResult) {
-        let files_to_check = [".env.example", ".env.sample", "docker-compose.yml", "docker-compose.yaml"];
+        // Prefer scanning real env/config files first, then examples.
+        // Note: we only use extracted hints; onboarding should still avoid persisting secrets by default.
+        let files_to_check = [
+            ".env",
+            ".env.local",
+            ".env.development",
+            ".env.production",
+            ".env.example",
+            ".env.sample",
+            "docker-compose.yml",
+            "docker-compose.yaml",
+        ];
 
         for file in &files_to_check {
             if let Some(content) = self.read_file(file) {

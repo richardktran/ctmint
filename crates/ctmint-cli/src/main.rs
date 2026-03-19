@@ -18,13 +18,13 @@ struct Cli {
 enum Commands {
     /// Run AI-guided onboarding: detect source code, logs, DB, tracing and generate ctmint.yaml
     Init {
-        /// Path to source code repository (default: current directory)
-        #[arg(long, default_value = ".")]
-        path: String,
+        /// Path to source code repository (if omitted, you'll be prompted)
+        #[arg(long)]
+        path: Option<String>,
 
-        /// Output path for the project manifest
-        #[arg(long, default_value = "ctmint.yaml")]
-        output: String,
+        /// Output path for the project manifest (if omitted, defaults to <project>.yaml in repo root)
+        #[arg(long)]
+        output: Option<String>,
 
         /// Skip AI model and use guided question flow only
         #[arg(long)]
@@ -92,7 +92,7 @@ async fn main() {
             force,
             demo,
         } => {
-            commands::init::run(&path, &output, no_ai, force, demo).await;
+            commands::init::run(path.as_deref(), output.as_deref(), no_ai, force, demo).await;
         }
         Commands::DownloadModel => {
             commands::download_model::run().await;
