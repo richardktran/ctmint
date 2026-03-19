@@ -1,4 +1,4 @@
-project: kmy
+project: kmy-drug-store
 services:
 - name: kmy
   repo_path: /Users/richardktran/Projects/KMY-Drug-Store
@@ -9,4 +9,4 @@ logs:
   format: text
 database:
   type: mysql
-  connection: Get from this DB_CONNECTION=mysqlDB_HOST=127.0.0.1DB_PORT=3306DB_DATABASE=kmy_drug_storeDB_USERNAME=rootDB_PASSWORD=annowitDB_LOG_LEVEL=info
+  connection: mysql://root:annowit@localhost:3306/kmy_drug_store

@@ -113,13 +113,13 @@ A sample manifest is at **`ctmint.yaml`**. Use it to try `ctmint index` and `ctm
 | **Core data model** | ✅ `Node` / `Edge` with `NodeType`, `EdgeType`; stable ID helpers; `VectorMetadata`, `SearchResult`, `SearchFilters` |
 | **Manifest** | ✅ `ProjectManifest` schema (project, services, logs, database, tracing); load/validate from YAML; `ctmint.yaml` sample |
 | **Global config** | ✅ `GlobalConfig` (data_dir, optional LLM/embedding endpoints); file + env overrides |
-| **Storage traits** | ✅ `GraphStore` and `VectorStore` async traits; **in-memory** implementations for tests and stubs |
+| **Storage traits** | ✅ `GraphStore` and `VectorStore` async traits; **in-memory** and **SQLite** implementations |
 | **AI onboarding** | ✅ Repo scanner (languages, structure, DB/tracing hints); fallback question flow; AI-assisted flow with local model; manifest writer; `ctmint init` with `--no-ai`, `--demo`, `--force`; `ctmint download-model` |
 | **CLI** | ✅ `init`, `download-model`, `index`, `graph list-services`, `graph query`, `serve` |
 | **MCP server** | ✅ Stdio JSON-RPC server; `initialize`, `tools/list`, `tools/call`; 10 stub tools; tool calls return "Not implemented" |
 | **Tests** | ✅ 68 tests (scanner, question parsing, manifest round-trip, fallback flow, integration fixtures, plus existing graph CRUD, vector search, MCP handlers) |
 
-**Not yet implemented:** SQLite graph store (Cycle 2), code parser/indexer (Cycle 3), vector index, context funnel, real tool implementations.
+**Not yet implemented:** Code parser/indexer (Cycle 3), vector index, context funnel, real tool implementations for remaining tools.
 
 ---
 
@@ -138,7 +138,7 @@ A sample manifest is at **`ctmint.yaml`**. Use it to try `ctmint index` and `ctm
 | **`ideas/`** | Technical design: architecture, orchestrator, MCP core, code indexer/parser, knowledge graph, vector index, runtime/data ingestion, context funnel, plugins, AI setup agent, deployment. |
 | **`planning/`** | Step-by-step implementation plan (MVP cycles). Each cycle has its own doc. |
 
-**Implementation order:** Cycle 0 ✅ → Cycle 1 ✅ → Cycle 2 (SKG on SQLite) → Cycle 3 (code parser + indexer) → … → Cycle 9 (diagnose MVP) → Cycle 10 (hardening).
+**Implementation order:** Cycle 0 ✅ → Cycle 1 ✅ → Cycle 2 ✅ → Cycle 3 (code parser + indexer) → … → Cycle 9 (diagnose MVP) → Cycle 10 (hardening).
 
 ---
 
@@ -153,7 +153,7 @@ A sample manifest is at **`ctmint.yaml`**. Use it to try `ctmint index` and `ctm
 
 ## Status
 
-**Cycle 0 and Cycle 1 are done.** The repo has a runnable CLI, AI-guided onboarding (`ctmint init`), MCP server stub, loadable manifest and config, and storage traits with in-memory implementations. Next: Cycle 2 (embedded System Knowledge Graph on SQLite).
+**Cycle 0, 1, and 2 are done.** The repo has a runnable CLI, AI-guided onboarding (`ctmint init`), MCP server with real `get_architecture_map` and `get_service_graph` tools, SQLite-backed System Knowledge Graph, and `ctmint graph load-sample` / `list-services` / `query`. Next: Cycle 3 (code parser + indexer).
 
 ---
 

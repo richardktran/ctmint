@@ -13,6 +13,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+authors = ["Richard Tran <richardktran.dev@gmail.com>"]
 repository = "https://github.com/richardktran/ctmint"
 
 [workspace.dependencies]

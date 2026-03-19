@@ -133,6 +133,20 @@ impl Edge {
     }
 }
 
+// ── Query result types ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchitectureMap {
+    pub nodes: Vec<Node>,
+    pub edges: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceSubgraph {
+    pub nodes: Vec<Node>,
+    pub edges: Vec<Edge>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
