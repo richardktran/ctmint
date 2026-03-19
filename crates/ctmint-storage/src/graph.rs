@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use ctmint_core::error::Result;
-use ctmint_core::graph::{Direction, Edge, EdgeType, Node, NodeType};
-use std::collections::HashMap;
+use ctmint_core::graph::{
+    ArchitectureMap, Direction, Edge, EdgeType, Node, NodeType, ServiceSubgraph,
+};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 // ── Trait ────────────────────────────────────────────────────────────
@@ -36,6 +38,61 @@ pub trait GraphStore: Send + Sync {
         edge_type: EdgeType,
         project_id: &str,
     ) -> Result<Vec<Edge>>;
+
+    async fn get_architecture_map(&self, project_id: &str) -> Result<ArchitectureMap> {
+        let services = self.get_nodes_by_type(NodeType::Service, project_id).await?;
+        let calls_edges = self
+            .get_edges_by_type(EdgeType::Calls, project_id)
+            .await?;
+        let dep_edges = self
+            .get_edges_by_type(EdgeType::DependsOn, project_id)
+            .await?;
+        let service_ids: HashSet<&str> = services.iter().map(|n| n.id.as_str()).collect();
+        let mut edges = Vec::new();
+        for e in calls_edges.iter().chain(dep_edges.iter()) {
+            if service_ids.contains(e.source_id.as_str()) && service_ids.contains(e.target_id.as_str())
+            {
+                edges.push((e.source_id.clone(), e.target_id.clone()));
+            }
+        }
+        Ok(ArchitectureMap { nodes: services, edges })
+    }
+
+    async fn get_service_graph(&self, service_name: &str, project_id: &str) -> Result<ServiceSubgraph> {
+        let services = self.get_nodes_by_type(NodeType::Service, project_id).await?;
+        let service = services
+            .iter()
+            .find(|n| n.attr_str("name") == Some(service_name))
+            .cloned()
+            .ok_or_else(|| ctmint_core::error::CtmintError::NodeNotFound(service_name.to_string()))?;
+        let service_id = &service.id;
+        let mut node_ids: HashSet<String> = HashSet::new();
+        node_ids.insert(service.id.clone());
+        let mut edges = Vec::new();
+        let edge_types = [
+            EdgeType::Calls,
+            EdgeType::Contains,
+            EdgeType::Implements,
+            EdgeType::Imports,
+            EdgeType::DependsOn,
+        ];
+        for et in edge_types {
+            for e in self.get_edges_by_type(et, project_id).await? {
+                if e.source_id == *service_id || e.target_id == *service_id {
+                    node_ids.insert(e.source_id.clone());
+                    node_ids.insert(e.target_id.clone());
+                    edges.push(e);
+                }
+            }
+        }
+        let mut nodes: Vec<Node> = Vec::new();
+        for id in &node_ids {
+            if let Some(n) = self.get_node(id).await? {
+                nodes.push(n);
+            }
+        }
+        Ok(ServiceSubgraph { nodes, edges })
+    }
 }
 
 // ── In-memory implementation (for testing and Cycle 0) ──────────────

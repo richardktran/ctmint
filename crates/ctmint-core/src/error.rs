@@ -32,6 +32,9 @@ pub enum CtmintError {
 
     #[error(transparent)]
     SerdeJson(#[from] serde_json::Error),
+
+    #[error("rusqlite: {0}")]
+    Rusqlite(String),
 }
 
 pub type Result<T> = std::result::Result<T, CtmintError>;

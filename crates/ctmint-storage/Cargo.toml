@@ -6,9 +6,11 @@ edition.workspace = true
 [dependencies]
 ctmint-core = { workspace = true }
 async-trait = { workspace = true }
+rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

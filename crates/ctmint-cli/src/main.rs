@@ -61,6 +61,13 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum GraphAction {
+    /// Load a sample graph (auth-service, user-service, payment-service)
+    LoadSample {
+        /// Project ID for the sample graph
+        #[arg(long, default_value = "sample")]
+        project: String,
+    },
+
     /// List all services in the graph
     ListServices {
         /// Path to project manifest
@@ -101,6 +108,9 @@ async fn main() {
             commands::index::run(&project).await;
         }
         Commands::Graph { action } => match action {
+            GraphAction::LoadSample { project } => {
+                commands::graph::load_sample(&project).await;
+            }
             GraphAction::ListServices { project } => {
                 commands::graph::list_services(&project).await;
             }

@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+ctmint-config = { workspace = true }
 ctmint-core = { workspace = true }
 ctmint-storage = { workspace = true }
 serde = { workspace = true }
